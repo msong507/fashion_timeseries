@@ -1,0 +1,280 @@
+---
+title: "Time Series Analysis on Korean Online Shopping Transaction"
+author: "Mia Song"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction to South Korea's Fashion E-Commerce Market
+- In 2021, data from Oberlo highlighted South Korea's significant e-commerce growth, ranking it as the 5th largest global market with $120 billion in online sales. However, this only represented 2.5% of the country's total retail sales, indicating substantial room for growth. (https://www.oberlo.com/statistics/ecommerce-sales-by-country)
+- Within this landscape, the fashion industry stands out, with data from Statistics Korea showing its steady growth since 2017. As fashion sales are influenced by factors such as seasonality and economic trends, we will employ time series forecasting to predict the industry's 2023 performance, thus providing a valuable projection for this sector's trajectory.
+- The monetary unit utilized in this analysis is the billion Korean Won.
+
+# 1. Import Necessary Libraries
+```{r}
+library(forecast)
+library(tseries)
+library(ggplot2)
+library(urca)
+library(readxl)
+library(corrplot)
+library(TSA)
+library(fpp)
+library(stats)
+```
+
+# 2. Prepare Data
+## 2.1. Import Data
+```{r}
+df_raw <- read.csv('df_ts.csv')
+head(df_raw)
+tail(df_raw)
+```
+
+## 2.2. Convert Data into Time Series Format and Train / Test Split
+```{r}
+df <- ts(df_raw$trans, start = c(2017, 1), end = c(2022, 12), frequency = 12)
+df
+
+df_train <- window(df, start = c(2017, 1), end = c(2021, 12))
+df_test <- window(df, start = c(2022,1), end = c(2022, 12))
+
+df_train
+df_test
+```
+
+# 3. Check for Stationarity 
+- Stationarity in a time series implies a consistent statistical landscape, meaning characteristics such as mean and variance exhibit consistency throughout the time series, irrespective of the time period.
+
+## 3.1. Visual Inspection
+- The assumption based on the visual inspection is that the time series data is non-stationary , possibly owing to an increasing trend, variance or seasonality. However, further examination is required to substantiate this assumption.
+```{r}
+autoplot(df_train) + ylab('Transaction Amount (KRW)') + ggtitle('Korean Online Shopping Transaction Amount by Year')
+
+autoplot(decompose(df_train, type = 'additive'))
+autoplot(decompose(df_train, type = 'multiplicative'))
+```
+
+## 3.2. Box-Cox Transformation 
+- When the lambda value equals 1, this signals a logarithmic transformation of the data. Lambda values exceeding 1 imply positive skewness, while values below 1 indicate negative skewness. As the lambda value approaches 1, the transformation increasingly resembles a logarithmic transformation.
+```{r}
+lambda = BoxCox.lambda(df_train)
+lambda # -0.5117632
+```
+
+-The Box-Cox transformation was applied to the data, but the observed improvement is not substantial.
+```{r}
+cbind('Original Plot' = df_train, 'BoxCox Transformed Plot' = BoxCox(df_train, lambda = lambda)) %>% autoplot(facet = TRUE) + ggtitle('Comparison of BoxCox Transformation')
+```
+
+## 3.3. KPSS and ADF Test
+### 3.3.1. KPSS Test
+- It checks whether the trend is present and significant enough to reject the null hypothesis of stationarity.
+- For the KPSS test, the null hypothesis presumes the time series is stationary. If the p-value is less than 0.05, we reject the null hypothesis, thereby accepting the alternative hypothesis which suggests non-stationarity in the time series data.
+```{r}
+kpss.test(df_train) # With a p-value of 0.01 (less than the significance level of 0.05), we reject the null hypothesis of stationarity and accept the alternative hypothesis, which suggests non-stationarity.
+```
+
+### 3.3.2. ADF Test
+- The test assesses whether the coefficient of the lagged difference in the time series is significantly different from 0.(=if the data follows a random walk with a unit root (non-stationary) or not (stationary).)
+- In this context, the null hypothesis postulates non-stationarity of the time series data. If the p-value is greater than 0.05, we accept the null hypothesis, indicating that the time series data is indeed non-stationary.
+```{r}
+adf.test(df_train) # p-value = 0.03898 < 0.05, reject the null, and accept the alternative hypothesis, which suggests stationarity.
+```
+
+## 3.4. ACF and PACF
+- ACF, or Autocorrelation Function, gauges the correlation between a time series and its lagged counterpart, assisting us in discerning patterns in the data. The ACF plot exhibits slow decay and subdued seasonal patterns, reinforcing the assertion that our training dataset is not stationary.
+- A swift decay in the ACF signifies that historical values of the series don’t offer valuable insights for future predictions due to lack of correlation. Therefore, if a time series’ ACF plot displays rapid decay and the autocorrelation values are nearly zero for the majority of lags, it is indicative of the series’ stationarity.
+```{r}
+tsdisplay(df_train) 
+acf(df_train) # The ACF plot reveals clear evidence of strong autocorrelation in the data, exhibiting slow decay and subdued seasonal patterns. 
+```
+
+## 3.5.Seasonality Assessment
+- Seasonality is frequently a feature that disrupts the stationarity of a time series.Due to the presence of recurring patterns, seasonality imparts non-stationary behavior to a time series as it leads to variations in the mean and variability at specific intervals.
+```{r}
+ggseasonplot(df_train, polar = TRUE)
+ggseasonplot(df_train)
+ggsubseriesplot(df_train)
+```
+
+### 3.4.2. Periodogram Analysis
+```{r}
+spectrum(df_train)
+
+periodogram(df_train)
+temp <- periodogram(df_train)
+max_freq <- temp$freq[which.max(temp$spec)]
+seasonality <- 1 / max_freq
+seasonality # 6
+
+1 / temp$freq[5] # The freq[5] is the 4th largest value, which indicates a seasonality of 12.
+```
+
+# 4. Achieve Stationarity
+## 4.1. Combinations for Handling Non-Stationarity 
+### 4.1.1. BoxCox Transformation
+```{r}
+tsdisplay(BoxCox(df_train, lambda = lambda)) # Even from the visual inspection of the ACF plot, stationarity was not achieved.
+kpss.test(BoxCox(df_train, lambda = lambda)) # p-value = 0.01 (< 0.05, non-stationary)
+adf.test(BoxCox(df_train, lambda = lambda)) # p-value = 0.01 (< 0.05, stationary)
+```
+
+### 4.1.2. 1st Order Differencing
+```{r}
+tsdisplay(diff(df_train))
+kpss.test(diff(df_train)) # p-value = 0.1 (> 0.05, stationary)
+adf.test(diff(df_train)) # p-value = 0.01 (< 0.05, stationary)
+```
+
+### 4.1.3. Time Lag Differencing
+```{r}
+tsdisplay(diff(df_train, lags = 6))
+kpss.test(diff(df_train, lags = 6)) # p-value = 0.1 (> 0.05, stationary)
+adf.test(diff(df_train, lags = 6)) # p-value = 0.01 (< 0.05, stationary)
+```
+
+### 4.1.3. 1st Order Differencing + Time Lag Differencing
+```{r}
+tsdisplay(diff(diff(df_train, lags = 6)))
+kpss.test(diff(diff(df_train, lags = 6))) # p-value = 0.1 (> 0.05, stationary)
+adf.test(diff(diff(df_train, lags = 6))) # p-value = 0.01 (< 0.05, stationary)
+```
+
+- Either 1st order differencing and time lag differencing at 6 alone or combining them together would make the data stationary.
+
+# 5. Model Desgin and Trainning
+- Why do we feed the original time series data to our models? Each of these time series models is designed to handle specific patterns or properties commonly found in time series data.When using these models, the algorithms themselves internally handle the necessary differencing or transformation to capture the underlying patterns in the data.Many time series models have built-in features to capture different patterns, trends, and seasonality components. By providing the original data, the model can automatically detect and adjust to the data's inherent characteristics, making the modeling process more flexible and automated.Using the original data in the model allows for better interpretability of the results.
+
+## 5.1. Seasonal Naive
+```{r}
+m_snaive = snaive(df_train)
+summary(m_snaive) # RMSE on training set: 2404.29
+checkresiduals(m_snaive)
+```
+
+## 5.2. ETS
+- The presence of multiplicative seasonality implies that the series’ seasonal variations are proportional to its overall level.
+- An additive trend suggests that the series incorporates a linear trend, which is added to its level, hence the changes in trend are constant over time.
+- The multiplicative error implies that the series’ variability or noise is multiplied by a constant factor, indicating the level of noise in the data scales with the level of the data itself.
+```{r}
+m_ets = ets(df_train)
+summary(m_ets) # ETS(M,Ad,M)  # RMSE on training set: 847.3451
+checkresiduals(m_ets)
+```
+
+## 5.3. ARIMA
+```{r}
+m_arima = auto.arima(df_train, lambda = 'auto', seasonal = TRUE, trace = TRUE) 
+summary(m_arima) # ARIMA(1,0,1)(0,1,0)[12] with drift # AICc=-599.08 # RMSE on training set = 1867.914
+checkresiduals(m_arima) # The residuals show autocorrelation.
+```
+
+```{r}
+m_arima2 = auto.arima(df_train, seasonal = TRUE, trace = TRUE) 
+summary(m_arima2) # ARIMA(1,0,0)(1,1,0)[12] with drift # AICc=825.18 # RMSE on training set: 1022.652
+checkresiduals(m_arima2)
+```
+
+```{r}
+m_arima3 = auto.arima(df_train, lambda = 'auto', seasonal = FALSE, trace = TRUE) 
+summary(m_arima3) # # ARIMA(2,1,2) with drift # AICc=-674.07 # RMSE on training set: 1954.353
+checkresiduals(m_arima3)
+```
+
+```{r}
+m_arima4 = auto.arima(df_train, seasonal = FALSE, trace = TRUE) 
+summary(m_arima4) # ARIMA(0,1,0) # AICc=1095.87 # RMSE on training set: 2545.609 
+checkresiduals(m_arima4)
+```
+
+## 5.4. tbats
+```{r}
+m_tabats <- tbats(df_train) 
+summary(m_tabats) # AIC: 1094.199
+checkresiduals(m_tabats)
+```
+
+# 6. Model Evaluation
+- forecast() function: The forecast() function is specifically designed for time series forecasting. It is commonly used with models such as ARIMA, ETS, TBATS, and others.
+- predict() function: The predict() function is a more general-purpose function used for making predictions with various types of models.
+
+## 6.1. Seasonal Naive
+```{r}
+fc_snaive <- forecast(m_snaive, h = 12)
+accuracy(fc_snaive, df_test) # RMSE on training set: 2404.290, RMSE on test set: 2902.843
+autoplot(df) + autolayer(fc_snaive$mean, series = 'forecasts') + ylab('Transaction Amount') + ggtitle('Forecast for 2022 using the Seasonal Naive Model')
+```
+
+## 6.2. ETS
+```{r}
+fc_ets <- forecast(m_ets, h = 12)
+accuracy(fc_ets, df_test) # RMSE on training set: 847.3451, RMSE on test set: 1010.9793
+autoplot(df) + autolayer(fc_ets$mean, series = 'forecasts') + ylab('Transaction Amount') + ggtitle('Forecast for 2022 using the ETS Model')
+```
+
+## 6.3. ARIMA
+```{r}
+fc_arima2 <- forecast(m_arima2, h = 12)
+accuracy(fc_arima2, df_test) # RMSE on training set: 1022.652 , RMSE on test set: 1638.319 
+autoplot(df) + autolayer(fc_arima2$mean, series = 'forecasts') + ylab('Transaction Amount') + ggtitle('Forecast for 2022 using the ARIMA Model')
+```
+
+```{r}
+fc_arima3 <- forecast(m_arima3, h = 12)
+accuracy(fc_arima3, df_test) # RMSE on training set: 1954.353 , RMSE on test set: 2369.961
+autoplot(df) + autolayer(fc_arima3$mean, series = 'forecasts') + ylab('Transaction Amount') + ggtitle('Forecast for 2022 using the ARIMA Model')
+```
+
+```{r}
+fc_arima4 <- forecast(m_arima4, h = 12)
+accuracy(fc_arima4, df_test) # RMSE on training set: 2545.609 , RMSE on test set: 4781.561
+autoplot(df) + autolayer(fc_arima4$mean, series = 'forecasts') + ylab('Transaction Amount') + ggtitle('Forecast for 2022 using the ARIMA Model')
+```
+
+## 6.4. tbats
+```{r}
+fc_tabats <- forecast(m_tabats, h = 12)
+accuracy(fc_tabats, df_test) # RMSE on training set: 832.3611 , RMSE on test set: 1593.6982
+autoplot(df) + autolayer(fc_tabats$mean, series = 'forecasts') + ylab('Transaction Amount') + ggtitle('Forecast for 2022 using the tbats Model')
+```
+
+- When ETS Model Works Better Over ARIMA Model: If the time series data exhibits clear and strong seasonal patterns, an ETS model may work better, as it is specifically designed to handle seasonality through the seasonal component. ETS models can handle both additive and multiplicative seasonality, making them suitable for data with different types of seasonal patterns. When the time series data shows a clear trend component, an ETS model might perform better, as it includes the trend component to capture trend patterns. ETS models tend to be more straightforward and easier to interpret, making them suitable for cases where simpler models are preferred.
+- When ARIMA Model Works Better Over ETS Model: If the time series data does not exhibit significant seasonality, an ARIMA model may work better, as it can handle non-seasonal data more effectively than ETS models. ARIMA models can handle non-stationary data by using differencing. If differencing is necessary to make the data stationary, an ARIMA model might be more appropriate. For time series data with complex and irregular patterns that are challenging to capture using simpler models, an ARIMA model with its autoregressive and moving average components may be better suited to capture these dynamics. ARIMA models may perform better for longer forecast horizons, especially when dealing with stable, non-seasonal data. 
+
+# 7. Model Deployment
+```{r}
+m_ets <- ets(df) # Retrain the ets model using the whole data set without spliting train and test data set
+fc_ets <- forecast(m_ets, 12)
+autoplot(df) + autolayer(fc_ets$mean, series = 'forecasts') + ylab('Transaction Amount') + ggtitle('Forecast for 2023 using the ETS Model')
+```
+
+```{r}
+fcst2023 = sum(fc_ets$mean)
+fcst2023 # 317068.9 # We expect 317068.9 for online sales transaction amount in 2023.
+```
+
+```{r}
+actual2022 = sum(window(df, start = c(2022,1), end = c(2022,12)))
+actual2022 # 296608.2 # It was 296608.2 for online sales transaction amount in 2022.
+```
+
+```{r}
+actual2021 = sum(window(df, start = c(2021,1), end = c(2021,12)))
+actual2021 # 264851 # It was 264851 for online sales transaction amount in 2022.
+```
+
+```{r}
+(fcst2023 / actual2022) - 1 # 0.06898235 # The expected growth rate in 2023
+(actual2022 / actual2021) - 1 # 0.1199057 # The growth rate in 2022
+```
+
+```{r}
+# Comparison between the expected and actual transaction amount between January to March in 2023.
+df_raw$trans[(length(df_raw$trans) - 2):length(df_raw$trans)]
+fc_ets$mean
+```
