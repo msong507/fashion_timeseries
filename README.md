@@ -13,7 +13,7 @@ Contents:
 - Description: A Jupyter notebook containing exploratory data analysis (EDA) and initial data processing.
 - Function: Provides an initial understanding of the dataset in preparation for time series analysis.
 
-### 3. SKoreaFashion_Forecast.Rmd / SKoreaFashion_Forecast.html
+### 3. SKoreaFashion_Forecast.Rmd
 - Description: Detailed time series analysis implemented in R.
 - Format: Data is provided in R markdown format
 
