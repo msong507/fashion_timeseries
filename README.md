@@ -15,7 +15,7 @@ Contents:
 
 ### 3. SKoreaFashion_Forecast.Rmd / SKoreaFashion_Forecast.html
 - Description: Detailed time series analysis implemented in R.
-- Format: Data is provided in both .Rmd and HTML formats, generated from Rmarkdown.
+- Format: Data is provided in R markdown format
 
 ### 4. SKoreaFashion_Presentation.pdf
 - Description: A presentation summarizing the analysis of South Korea's online fashion market.
